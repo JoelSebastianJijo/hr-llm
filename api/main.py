@@ -7,7 +7,8 @@ from queries.hr_queries import (
     average_salary_by_department,
     employees_on_leave,
     gender_distribution,
-    top_earners
+    top_earners,
+    get_manager_by_emp
 )
 
 app = FastAPI()
@@ -42,4 +43,9 @@ def get_gender_distribution():
 @app.get("/top-earners")
 def get_top_earners(limit: int = 10):
     df = top_earners(limit)
+    return df.to_dict(orient="records")
+
+@app.get("/manager/{emp_no}")
+def get_manager(emp_no: int):
+    df = get_manager_by_emp(emp_no)
     return df.to_dict(orient="records")

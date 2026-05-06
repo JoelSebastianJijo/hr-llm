@@ -25,3 +25,11 @@ if st.button("👥 Gender Distribution"):
 if st.button("🏆 Top 10 Earners"):
     data = requests.get(f"{API_URL}/top-earners").json()
     st.dataframe(data)
+st.subheader("🔍 Find Manager by Employee Number")
+emp_no = st.number_input("Enter Employee Number", min_value=1, step=1)
+if st.button("Find Manager"):
+    data = requests.get(f"{API_URL}/manager/{int(emp_no)}").json()
+    if data:
+        st.dataframe(data)
+    else:
+        st.warning("No manager found for this employee number.")
