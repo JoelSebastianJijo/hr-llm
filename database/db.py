@@ -1,9 +1,11 @@
+import streamlit as st
 from sqlalchemy import create_engine, text
 import pandas as pd
 from dotenv import load_dotenv
 from urllib.parse import quote_plus
 import os
 import logging
+
 
 load_dotenv()
 
@@ -13,6 +15,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+@st.cache_resource
 def get_engine():
     try:
         password = quote_plus(os.getenv("DB_PASSWORD"))
