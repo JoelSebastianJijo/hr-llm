@@ -31,13 +31,14 @@ DATABASE SCHEMA:
 
 IMPORTANT RULES:
 - ALWAYS filter current records using to_date = '9999-01-01' in dept_emp, dept_manager, salaries, titles. This is mandatory for every query involving these tables, no exceptions.
-- For personal salary queries, ALWAYS use: WHERE s.emp_no = <emp_no> AND s.to_date = '9999-01-01' LIMIT 1
+- The employees table has NO to_date column. Never filter employees by to_date. Use hire_date directly.
+- The leave_requests table has NO to_date column. Never add to_date filter on leave_requests.
+- "currently on leave" means CURDATE() BETWEEN leave_requests.start_date AND leave_requests.end_date. Never use to_date for this.
 - leave_type values are: 'Annual', 'Sick', 'Maternity', 'Paternity', 'Unpaid'
 - status values are: 'Approved', 'Pending', 'Rejected'
 - gender values are: 'M', 'F'
 - Return ONLY the SQL query. No explanation, no markdown, no backticks.
 - Never use DROP, DELETE, UPDATE or INSERT statements.
-- The employees table has no to_date column. Never filter employees by to_date.
 - Always enforce the access restriction provided for the user role.
 
 EXAMPLES:
@@ -55,6 +56,30 @@ SQL: SELECT s.salary FROM salaries s WHERE s.emp_no = <emp_no> AND s.to_date = '
 
 Q: Who are the top 10 highest paid employees?
 SQL: SELECT e.first_name, e.last_name, s.salary FROM employees e JOIN salaries s ON e.emp_no = s.emp_no WHERE s.to_date = '9999-01-01' ORDER BY s.salary DESC LIMIT 10;
+
+Q: When was I hired? / What is my hire date? / When did I join?
+SQL: SELECT hire_date FROM employees WHERE emp_no = <emp_no>;
+
+Q: Show my leave requests / What are my leave requests? / List my time off
+SQL: SELECT leave_type, start_date, end_date, status FROM leave_requests WHERE emp_no = <emp_no>;
+
+Q: List my team / Who are my team members? / Who reports to me? / Show employees in my department
+SQL: SELECT e.emp_no, e.first_name, e.last_name FROM employees e JOIN dept_emp de ON e.emp_no = de.emp_no WHERE de.dept_no = (SELECT dept_no FROM dept_manager WHERE emp_no = <emp_no> AND to_date = '9999-01-01') AND de.to_date = '9999-01-01' AND de.emp_no != <emp_no>;
+
+Q: Which employees are currently on sick leave? / Who is on sick leave?
+SQL: SELECT e.first_name, e.last_name, lr.start_date, lr.end_date FROM employees e JOIN leave_requests lr ON e.emp_no = lr.emp_no WHERE lr.leave_type = 'Sick' AND lr.status = 'Approved' AND CURDATE() BETWEEN lr.start_date AND lr.end_date;
+
+Q: Who is currently on leave? / Find employees currently on leave? / Who is out today?
+SQL: SELECT e.first_name, e.last_name, lr.leave_type, lr.start_date, lr.end_date FROM employees e JOIN leave_requests lr ON e.emp_no = lr.emp_no WHERE lr.status = 'Approved' AND CURDATE() BETWEEN lr.start_date AND lr.end_date;
+
+Q: Show all pending leave requests / Which leave requests are pending?
+SQL: SELECT e.first_name, e.last_name, lr.leave_type, lr.start_date, lr.end_date FROM employees e JOIN leave_requests lr ON e.emp_no = lr.emp_no WHERE lr.status = 'Pending';
+
+Q: What is my current title / job title / role?
+SQL: SELECT title FROM titles WHERE emp_no = <emp_no> AND to_date = '9999-01-01' LIMIT 1;
+
+Q: What department am I in? / Which department do I belong to?
+SQL: SELECT d.dept_name FROM departments d JOIN dept_emp de ON d.dept_no = de.dept_no WHERE de.emp_no = <emp_no> AND de.to_date = '9999-01-01';
 """
 
 def nl_to_sql(question: str, emp_no: int, is_manager: bool = False) -> str:
@@ -63,20 +88,27 @@ def nl_to_sql(question: str, emp_no: int, is_manager: bool = False) -> str:
             role_instruction = (
                 f"The user is a MANAGER with emp_no {emp_no}.\n\n"
                 "They have TWO types of access:\n\n"
-                "1. PERSONAL queries (about themselves e.g. my salary, my leave, my title, my department):\n"
-                f"   - Restrict using: WHERE emp_no = {emp_no} AND to_date = '9999-01-01' LIMIT 1\n\n"
-                "2. ORGANIZATIONAL queries (about employees, rankings, departments, headcount, averages):\n"
+                "1. PERSONAL queries (about themselves e.g. my salary, my leave, my title, my hire date, my department):\n"
+                f"   - For salaries/titles/dept_emp: restrict using WHERE emp_no = {emp_no} AND to_date = '9999-01-01'\n"
+                f"   - For employees table (hire_date, name, gender): restrict using WHERE emp_no = {emp_no} (NO to_date filter)\n"
+                f"   - For leave_requests: restrict using WHERE emp_no = {emp_no} (NO to_date filter)\n\n"
+                "2. ORGANIZATIONAL queries (about employees, rankings, departments, headcount, averages, leave across company):\n"
                 "   - Do NOT restrict by emp_no at all.\n"
-                "   - Query freely across ALL employees in the database.\n"
-                "   - Examples: top 5 highest paid, how many employees, average salary by department\n\n"
-                "If the question contains words like my, me, or I, treat it as a PERSONAL query.\n"
+                "   - Query freely across ALL employees in the database.\n\n"
+                "3. TEAM queries (list my team, who reports to me, my department members):\n"
+                f"   - Find the manager's dept_no from dept_manager WHERE emp_no = {emp_no} AND to_date = '9999-01-01'\n"
+                f"   - Then list all employees in that dept_no from dept_emp WHERE to_date = '9999-01-01' AND emp_no != {emp_no}\n\n"
+                "If the question contains words like my, me, or I, treat it as PERSONAL or TEAM query.\n"
                 "Otherwise, treat it as an ORGANIZATIONAL query and do NOT add any emp_no restriction."
             )
         else:
             role_instruction = (
                 f"The user is an EMPLOYEE with emp_no {emp_no}.\n"
-                "They can ONLY query their own personal data.\n"
-                f"Always add this restriction: WHERE emp_no = {emp_no} AND to_date = '9999-01-01'\n"
+                "They can ONLY query their own personal data.\n\n"
+                "Apply restrictions based on the table being queried:\n"
+                f"- For salaries, titles, dept_emp, dept_manager: WHERE emp_no = {emp_no} AND to_date = '9999-01-01'\n"
+                f"- For employees table (hire_date, name, gender, birth_date): WHERE emp_no = {emp_no} (NO to_date - employees has no to_date column)\n"
+                f"- For leave_requests: WHERE emp_no = {emp_no} (NO to_date - leave_requests has no to_date column)\n"
                 "Never return data belonging to any other employee."
             )
 
