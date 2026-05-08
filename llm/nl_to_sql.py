@@ -30,7 +30,8 @@ DATABASE SCHEMA:
 - leave_requests(leave_id, emp_no, leave_type, start_date, end_date, status)
 
 IMPORTANT RULES:
-- Always filter current records using to_date = '9999-01-01' in dept_emp, dept_manager, salaries, titles
+- ALWAYS filter current records using to_date = '9999-01-01' in dept_emp, dept_manager, salaries, titles. This is mandatory for every query involving these tables, no exceptions.
+- For personal salary queries, ALWAYS use: WHERE s.emp_no = <emp_no> AND s.to_date = '9999-01-01' LIMIT 1
 - leave_type values are: 'Annual', 'Sick', 'Maternity', 'Paternity', 'Unpaid'
 - status values are: 'Approved', 'Pending', 'Rejected'
 - gender values are: 'M', 'F'
@@ -49,31 +50,35 @@ SQL: SELECT d.dept_name, COUNT(de.emp_no) AS headcount FROM departments d JOIN d
 Q: What is the average salary by department?
 SQL: SELECT d.dept_name, ROUND(AVG(s.salary), 2) AS avg_salary FROM departments d JOIN dept_emp de ON d.dept_no = de.dept_no JOIN salaries s ON de.emp_no = s.emp_no WHERE de.to_date = '9999-01-01' AND s.to_date = '9999-01-01' GROUP BY d.dept_name ORDER BY avg_salary DESC;
 
-Q: Which employees are currently on sick leave?
-SQL: SELECT e.first_name, e.last_name, lr.start_date, lr.end_date FROM employees e JOIN leave_requests lr ON e.emp_no = lr.emp_no WHERE lr.leave_type = 'Sick' AND lr.status = 'Approved' AND CURDATE() BETWEEN lr.start_date AND lr.end_date;
+Q: What is my salary?
+SQL: SELECT s.salary FROM salaries s WHERE s.emp_no = <emp_no> AND s.to_date = '9999-01-01' LIMIT 1;
 
 Q: Who are the top 10 highest paid employees?
 SQL: SELECT e.first_name, e.last_name, s.salary FROM employees e JOIN salaries s ON e.emp_no = s.emp_no WHERE s.to_date = '9999-01-01' ORDER BY s.salary DESC LIMIT 10;
 """
 
 def nl_to_sql(question: str, emp_no: int, is_manager: bool = False) -> str:
-    """
-    Converts a natural language question to SQL.
-    Enforces role-based access:
-    - Employees can only query their own data
-    - Managers can query their own data and their staff's data
-    """
     try:
         if is_manager:
-            role_instruction = f"""The user is a MANAGER with emp_no {emp_no}.
-They can query their own data and data of employees in their department.
-Always restrict queries to their department using:
-dept_no IN (SELECT dept_no FROM dept_manager WHERE emp_no = {emp_no} AND to_date = '9999-01-01')"""
+            role_instruction = (
+                f"The user is a MANAGER with emp_no {emp_no}.\n\n"
+                "They have TWO types of access:\n\n"
+                "1. PERSONAL queries (about themselves e.g. my salary, my leave, my title, my department):\n"
+                f"   - Restrict using: WHERE emp_no = {emp_no} AND to_date = '9999-01-01' LIMIT 1\n\n"
+                "2. ORGANIZATIONAL queries (about employees, rankings, departments, headcount, averages):\n"
+                "   - Do NOT restrict by emp_no at all.\n"
+                "   - Query freely across ALL employees in the database.\n"
+                "   - Examples: top 5 highest paid, how many employees, average salary by department\n\n"
+                "If the question contains words like my, me, or I, treat it as a PERSONAL query.\n"
+                "Otherwise, treat it as an ORGANIZATIONAL query and do NOT add any emp_no restriction."
+            )
         else:
-            role_instruction = f"""The user is an EMPLOYEE with emp_no {emp_no}.
-They can ONLY query their own personal data.
-Always add this restriction: WHERE emp_no = {emp_no}
-Never return data belonging to any other employee."""
+            role_instruction = (
+                f"The user is an EMPLOYEE with emp_no {emp_no}.\n"
+                "They can ONLY query their own personal data.\n"
+                f"Always add this restriction: WHERE emp_no = {emp_no} AND to_date = '9999-01-01'\n"
+                "Never return data belonging to any other employee."
+            )
 
         full_prompt = f"{SCHEMA_DESCRIPTION}\n\nACCESS RESTRICTION:\n{role_instruction}\n\nQuestion: {question}"
 
