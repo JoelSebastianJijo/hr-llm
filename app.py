@@ -1,6 +1,7 @@
 ﻿import streamlit as st
 import sys
 import os
+import re
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -116,6 +117,37 @@ def is_data_question(question: str) -> bool:
         return True
 
 # ─────────────────────────────────────────────
+# SQL SECURITY VALIDATOR
+# ─────────────────────────────────────────────
+def validate_sql(sql: str, emp_no: int, is_manager: bool) -> tuple[bool, str]:
+    sql_upper = sql.upper()
+
+    # Block write operations
+    for keyword in ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "TRUNCATE"]:
+        if keyword in sql_upper:
+            return False, "Access denied: write operations are not allowed."
+
+    # Block schema probing
+    if "INFORMATION_SCHEMA" in sql_upper or "SHOW TABLES" in sql_upper:
+        return False, "Access denied: schema inspection is not allowed."
+
+    # Extract all 5-digit numbers from SQL (emp_nos are 5 digits)
+    numbers_in_sql = re.findall(r'\b(\d{5})\b', sql)
+
+    if not is_manager:
+        # Employee: only their own emp_no allowed
+        for num in numbers_in_sql:
+            if int(num) != emp_no:
+                return False, "Access denied: you can only query your own data."
+    else:
+        # Manager: no hardcoded emp_no other than their own allowed
+        for num in numbers_in_sql:
+            if int(num) != emp_no:
+                return False, "Access denied: cannot query specific employee data outside your department."
+
+    return True, ""
+
+# ─────────────────────────────────────────────
 # CHAT INTERFACE
 # ─────────────────────────────────────────────
 def show_chat(session):
@@ -169,33 +201,45 @@ def show_chat(session):
                         })
                     else:
                         sql = nl_to_sql(prompt, emp_no=emp_no, is_manager=is_manager)
-                        df = run_query(sql)
 
-                        if df.empty:
-                            st.markdown("No results found for your question.")
+                        # Security check before hitting DB
+                        is_safe, reason = validate_sql(sql, emp_no=emp_no, is_manager=is_manager)
+
+                        if not is_safe:
+                            st.warning(reason)
                             st.session_state.messages.append({
                                 "role": "assistant",
-                                "content": "No results found for your question.",
+                                "content": reason,
                                 "sql": sql
                             })
                         else:
-                            st.markdown("Here are the results:")
-                            st.dataframe(df)
-                            with st.expander("Generated SQL"):
-                                st.code(sql, language="sql")
-                            st.session_state.messages.append({
-                                "role": "assistant",
-                                "content": "Here are the results:",
-                                "dataframe": df,
-                                "sql": sql
-                            })
+                            df = run_query(sql)
+
+                            if df.empty:
+                                st.markdown("No results found for your question.")
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": "No results found for your question.",
+                                    "sql": sql
+                                })
+                            else:
+                                st.markdown("Here are the results:")
+                                st.dataframe(df)
+                                with st.expander("Generated SQL"):
+                                    st.code(sql, language="sql")
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": "Here are the results:",
+                                    "dataframe": df,
+                                    "sql": sql
+                                })
 
                 except Exception as e:
-                    error_msg = "Sorry, I couldn't process your question. Please try rephrasing it."
-                    st.error(error_msg)
+                    logging_msg = f"Chat error | emp_no={emp_no} | question={prompt} | error={e}"
+                    st.error("Sorry, I couldn't process your question. Please try rephrasing it.")
                     st.session_state.messages.append({
                         "role": "assistant",
-                        "content": error_msg
+                        "content": "Sorry, I couldn't process your question. Please try rephrasing it."
                     })
 
 # ─────────────────────────────────────────────
