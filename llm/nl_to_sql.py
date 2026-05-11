@@ -40,6 +40,7 @@ IMPORTANT RULES:
 - Return ONLY the SQL query. No explanation, no markdown, no backticks.
 - Never use DROP, DELETE, UPDATE or INSERT statements.
 - Always enforce the access restriction provided for the user role.
+- NEVER return SELECT 'Invalid question' AS result under any circumstances. Always attempt to generate valid SQL. If truly unable, return SELECT 'I cannot answer that question.' AS result.
 
 EXAMPLES:
 Q: How many male and female employees are there?
@@ -56,6 +57,9 @@ SQL: SELECT s.salary FROM salaries s WHERE s.emp_no = <emp_no> AND s.to_date = '
 
 Q: Who are the top 10 highest paid employees?
 SQL: SELECT e.first_name, e.last_name, s.salary FROM employees e JOIN salaries s ON e.emp_no = s.emp_no WHERE s.to_date = '9999-01-01' ORDER BY s.salary DESC LIMIT 10;
+
+Q: Who are the top 5 highest paid employees?
+SQL: SELECT e.first_name, e.last_name, s.salary FROM employees e JOIN salaries s ON e.emp_no = s.emp_no WHERE s.to_date = '9999-01-01' ORDER BY s.salary DESC LIMIT 5;
 
 Q: When was I hired? / What is my hire date? / When did I join?
 SQL: SELECT hire_date FROM employees WHERE emp_no = <emp_no>;
@@ -115,9 +119,9 @@ def nl_to_sql(question: str, emp_no: int, is_manager: bool = False) -> str:
         full_prompt = f"{SCHEMA_DESCRIPTION}\n\nACCESS RESTRICTION:\n{role_instruction}\n\nQuestion: {question}"
 
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama-3.3-70b-versatile",  # upgraded from 8b-instant
             messages=[
-                {"role": "system", "content": "You are an expert MySQL query writer for an HR system. Always enforce the access restrictions given. Return only the SQL query with no explanation."},
+                {"role": "system", "content": "You are an expert MySQL query writer for an HR system. Always enforce the access restrictions given. Return ONLY the raw SQL query — no explanation, no markdown, no backticks, no 'Invalid question' responses ever."},
                 {"role": "user", "content": full_prompt}
             ]
         )
@@ -137,3 +141,6 @@ if __name__ == "__main__":
 
     print("\n=== Testing as Manager (emp_no=110022) ===")
     print(nl_to_sql("How many employees are in my department?", emp_no=110022, is_manager=True))
+
+    print("\n=== Testing org query as Manager ===")
+    print(nl_to_sql("Who are the top 5 highest paid employees?", emp_no=10001, is_manager=True))
