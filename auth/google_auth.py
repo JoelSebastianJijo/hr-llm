@@ -19,14 +19,20 @@ logging.basicConfig(
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = "http://localhost:8501"
+import streamlit as st
+
+def get_redirect_uri():
+    try:
+        return st.secrets["GOOGLE_REDIRECT_URI"]
+    except:
+        return os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8501")
 
 def get_google_auth_url():
     """Generate the Google OAuth login URL."""
     base_url = "https://accounts.google.com/o/oauth2/v2/auth"
     params = (
         f"?client_id={GOOGLE_CLIENT_ID}"
-        f"&redirect_uri={REDIRECT_URI}"
+        f"&redirect_uri={get_redirect_uri()}"
         f"&response_type=code"
         f"&scope=openid%20email%20profile"
         f"&access_type=offline"
@@ -43,7 +49,7 @@ def exchange_code_for_token(code: str):
                 "code": code,
                 "client_id": GOOGLE_CLIENT_ID,
                 "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": REDIRECT_URI,
+                "redirect_uri": get_redirect_uri(),
                 "grant_type": "authorization_code",
             }
         )
