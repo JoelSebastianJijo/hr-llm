@@ -1,6 +1,7 @@
-import os
+﻿import os
+import time
 import logging
-from groq import Groq
+from groq import Groq, APITimeoutError, RateLimitError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -106,6 +107,47 @@ SQL: SELECT 'Access denied: cannot query specific employee data outside your dep
 """
 
 
+def _call_groq(messages: list) -> str:
+    """
+    Internal helper that calls the Groq API with specific error handling:
+    - APITimeoutError: retry once after 2s backoff, then fail with clear message
+    - RateLimitError: log and surface the wait time to the user
+    - Any other exception: log and re-raise
+    """
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages
+        )
+        return response.choices[0].message.content.strip()
+
+    except APITimeoutError:
+        # Retry once after 2 second backoff
+        logging.warning("Groq API timeout — retrying once after 2s backoff")
+        time.sleep(2)
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages
+            )
+            return response.choices[0].message.content.strip()
+        except APITimeoutError:
+            logging.error("Groq API timeout on retry — giving up")
+            raise RuntimeError(
+                "The AI service timed out. Please wait a moment and try again."
+            )
+
+    except RateLimitError as e:
+        # Try to surface the wait time from the error if available
+        wait_time = getattr(e, 'retry_after', None)
+        if wait_time:
+            msg = f"Rate limit reached. Please wait {wait_time} seconds before trying again."
+        else:
+            msg = "Rate limit reached. Please wait a moment before trying again."
+        logging.error(f"Groq rate limit hit: {e}")
+        raise RuntimeError(msg)
+
+
 def nl_to_sql(question: str, emp_no: int, is_manager: bool = False) -> str:
     try:
         if is_manager:
@@ -143,17 +185,25 @@ def nl_to_sql(question: str, emp_no: int, is_manager: bool = False) -> str:
 
         full_prompt = f"{SCHEMA_DESCRIPTION}\n\nACCESS RESTRICTION:\n{role_instruction}\n\nQuestion: {question}"
 
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are an expert MySQL query writer for an HR system. Always enforce the access restrictions given. Return ONLY the raw SQL query — no explanation, no markdown, no backticks, no 'Invalid question' responses ever."},
-                {"role": "user", "content": full_prompt}
-            ]
-        )
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert MySQL query writer for an HR system. Always enforce the access restrictions given. Return ONLY the raw SQL query — no explanation, no markdown, no backticks, no 'Invalid question' responses ever."
+            },
+            {
+                "role": "user",
+                "content": full_prompt
+            }
+        ]
 
-        sql = response.choices[0].message.content.strip()
+        sql = _call_groq(messages)
         sql = sql.replace("```sql", "").replace("```", "").strip()
         return sql
+
+    except RuntimeError as e:
+        # Surface clean timeout/rate limit messages to the UI
+        logging.error(f"nl_to_sql RuntimeError | emp_no={emp_no} | question={question} | error={e}")
+        return f"ERROR: {e}"
 
     except Exception as e:
         logging.error(f"nl_to_sql error | emp_no={emp_no} | is_manager={is_manager} | question={question} | error={e}")
