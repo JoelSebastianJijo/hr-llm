@@ -5,11 +5,15 @@ import re
 import logging
 from groq import Groq
 from dotenv import load_dotenv
-from sqlalchemy.exc import ProgrammingError
 from collections import deque
 from datetime import datetime, timedelta
 
 load_dotenv()
+
+# ─────────────────────────────────────────────
+# FIX 8: st.set_page_config MUST be the first Streamlit call — moved to top level
+# ─────────────────────────────────────────────
+st.set_page_config(page_title="HR Chatbot", page_icon="🤖")
 
 # ─────────────────────────────────────────────
 # LOGGING SETUP
@@ -21,6 +25,7 @@ logging.basicConfig(
 )
 
 sys.path.append(os.path.dirname(__file__))
+
 from auth.google_auth import (
     get_google_auth_url,
     exchange_code_for_token,
@@ -41,21 +46,15 @@ RATE_LIMIT = 20  # max questions per minute per user
 def is_rate_limited(emp_no: int) -> bool:
     now = datetime.now()
     window = timedelta(minutes=1)
-
     if "rate_limit_log" not in st.session_state:
         st.session_state["rate_limit_log"] = {}
-
     log = st.session_state["rate_limit_log"]
-
     if emp_no not in log:
         log[emp_no] = deque()
-
     while log[emp_no] and now - log[emp_no][0] > window:
         log[emp_no].popleft()
-
     if len(log[emp_no]) >= RATE_LIMIT:
         return True
-
     log[emp_no].append(now)
     return False
 
@@ -78,10 +77,8 @@ def get_current_session():
 def show_login():
     st.title("🔐 HR Chatbot Login")
     st.markdown("Please log in with your Google account to continue.")
-
     params = st.query_params
     code = params.get("code")
-
     if code:
         with st.spinner("Verifying your Google account..."):
             try:
@@ -89,17 +86,17 @@ def show_login():
                 if not token_data:
                     st.error("❌ Failed to get token from Google. Please try again.")
                     return
-
                 email = get_user_email_from_token(token_data)
                 if not email:
                     st.error("❌ Could not verify your Google account.")
                     return
-
                 user = get_user_account(email)
                 if not user:
-                    st.error(f"❌ Your email ({email}) is not registered in the HR system. Contact your administrator.")
+                    st.error(
+                        f"❌ Your email ({email}) is not registered in the HR system. "
+                        "Contact your administrator."
+                    )
                     return
-
                 session_id = create_session(
                     emp_no=user["emp_no"],
                     email=email,
@@ -108,20 +105,17 @@ def show_login():
                 if not session_id:
                     st.error("❌ Failed to create session. Please try again.")
                     return
-
                 st.session_state["session_id"] = session_id
                 st.session_state["emp_no"] = user["emp_no"]
                 st.session_state["role"] = user["role"]
                 st.session_state["email"] = email
-
                 st.query_params.clear()
                 st.rerun()
-
             except Exception as e:
                 st.error(f"❌ Login failed: {str(e)}")
     else:
-       auth_url = get_google_auth_url()
-       st.link_button("🔵 Login with Google", auth_url)
+        auth_url = get_google_auth_url()
+        st.link_button("🔵 Login with Google", auth_url)
 
 # ─────────────────────────────────────────────
 # INTENT DETECTION
@@ -148,7 +142,7 @@ def is_data_question(question: str) -> bool:
         return answer == "yes"
     except Exception as e:
         logging.error(f"Intent detection error | question={question} | error={e}")
-        return True
+        return True  # fail open — let nl_to_sql handle it
 
 # ─────────────────────────────────────────────
 # SQL SECURITY VALIDATOR
@@ -156,27 +150,36 @@ def is_data_question(question: str) -> bool:
 def validate_sql(sql: str, emp_no: int, is_manager: bool) -> tuple[bool, str]:
     sql_upper = sql.upper()
 
+    # Block write operations
     blocked_keywords = [
         "DROP", "DELETE", "UPDATE", "INSERT",
         "ALTER", "TRUNCATE", "CREATE", "REPLACE"
     ]
     for keyword in blocked_keywords:
-        if keyword in sql_upper:
+        if re.search(rf'\b{keyword}\b', sql_upper):
             return False, "Access denied: write operations are not allowed."
 
+    # Block schema inspection
     if "INFORMATION_SCHEMA" in sql_upper or "SHOW TABLES" in sql_upper:
         return False, "Access denied: schema inspection is not allowed."
 
-    numbers_in_sql = re.findall(r'\b(\d{5})\b', sql)
+    # FIX 9: Block forbidden table names explicitly
+    forbidden_tables = ['user_accounts', 'sessions', 'audit_log']
+    sql_lower = sql.lower()
+    for table in forbidden_tables:
+        if re.search(rf'\b{table}\b', sql_lower):
+            return False, "Access denied: query references restricted system tables."
 
+    # FIX 10: Removed broken manager emp_no check from original code.
+    # The old logic blocked any 5-digit number != manager's emp_no, which would
+    # incorrectly block valid emp_nos in JOIN/WHERE clauses generated by the LLM.
+    # Access scoping is enforced at the LLM prompt level in nl_to_sql.py instead.
+    # For employees, we still check they're not referencing another emp_no directly.
     if not is_manager:
+        numbers_in_sql = re.findall(r'\b(\d{5,6})\b', sql)
         for num in numbers_in_sql:
             if int(num) != emp_no:
                 return False, "Access denied: you can only query your own data."
-    else:
-        for num in numbers_in_sql:
-            if int(num) != emp_no:
-                return False, "Access denied: cannot query specific employee data outside your department."
 
     return True, ""
 
@@ -204,6 +207,7 @@ def log_audit(emp_no: int, email: str, question: str, sql: str, row_count: int, 
             conn.commit()
     except Exception as e:
         logging.error(f"Audit log failed | emp_no={emp_no} | error={e}")
+
 # ─────────────────────────────────────────────
 # CHAT INTERFACE
 # ─────────────────────────────────────────────
@@ -213,7 +217,7 @@ def show_chat(session):
     email = session["email"]
     is_manager = role == "manager"
 
-    st.set_page_config(page_title="HR Chatbot", page_icon="🤖")
+    # st.set_page_config() is now at top level (FIX 8)
     st.title("🤖 HR AI Chatbot")
     st.markdown(f"Logged in as **{email}** | {'👔 Manager' if is_manager else '👤 Employee'}")
 
@@ -249,9 +253,10 @@ def show_chat(session):
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 if is_rate_limited(emp_no):
-                    st.warning("You are sending too many questions. Please wait a moment before trying again.")
+                    msg = "⚠️ You are sending too many questions. Please wait a moment before trying again."
+                    st.warning(msg)
+                    st.session_state.messages.append({"role": "assistant", "content": msg})
                     st.stop()
-
                 else:
                     try:
                         if not is_data_question(prompt):
@@ -264,81 +269,81 @@ def show_chat(session):
                                 "role": "assistant",
                                 "content": msg
                             })
-
                         else:
                             sql = nl_to_sql(prompt, emp_no=emp_no, is_manager=is_manager)
 
                             if sql.startswith("ERROR:"):
+                                # Clean up the ERROR: prefix for display
+                                user_msg = sql[len("ERROR:"):].strip()
                                 logging.error(
-                                    f"Groq error | emp_no={emp_no} | question={prompt} | error={sql}"
+                                    f"LLM error | emp_no={emp_no} | question={prompt} | error={sql}"
                                 )
-                                st.error(f"⚠️ {sql}")
+                                st.error(f"⚠️ {user_msg}")
                                 st.session_state.messages.append({
                                     "role": "assistant",
-                                    "content": f"⚠️ {sql}"
+                                    "content": f"⚠️ {user_msg}"
                                 })
-
                             else:
                                 is_safe, reason = validate_sql(
                                     sql, emp_no=emp_no, is_manager=is_manager
                                 )
-
                                 if not is_safe:
                                     logging.error(
                                         f"Security block | emp_no={emp_no} | question={prompt} | sql={sql} | reason={reason}"
                                     )
-                                    st.warning(reason)
+                                    st.warning(f"🚫 {reason}")
                                     log_audit(emp_no, email, prompt, sql, 0, True, reason)
                                     st.session_state.messages.append({
                                         "role": "assistant",
-                                        "content": reason,
+                                        "content": f"🚫 {reason}",
                                         "sql": sql
                                     })
-
                                 else:
                                     try:
                                         df = run_query(sql)
 
-                                        if df is None:
-                                            msg = "⚠️ A database error occurred. Please try again later."
-                                            logging.error(f"DB returned None | emp_no={emp_no} | sql={sql}")
-                                            st.error(msg)
+                                        if df.empty:
+                                            msg = "ℹ️ No results found for your question."
+                                            st.info(msg)
+                                            log_audit(emp_no, email, prompt, sql, 0, False)
                                             st.session_state.messages.append({
                                                 "role": "assistant",
                                                 "content": msg,
                                                 "sql": sql
                                             })
-
-                                        elif df.empty:
-                                            msg = "No results found for your question."
-                                            st.markdown(msg)
-                                            st.session_state.messages.append({
-                                                "role": "assistant",
-                                                "content": msg,
-                                                "sql": sql
-                                            })
-
                                         else:
-                                            st.markdown("Here are the results:")
+                                            st.markdown(f"Here are the results ({len(df)} row{'s' if len(df) != 1 else ''}):")
                                             st.dataframe(df)
                                             log_audit(emp_no, email, prompt, sql, len(df), False)
                                             with st.expander("Generated SQL"):
                                                 st.code(sql, language="sql")
                                             st.session_state.messages.append({
                                                 "role": "assistant",
-                                                "content": "Here are the results:",
+                                                "content": f"Here are the results ({len(df)} row{'s' if len(df) != 1 else ''}):",
                                                 "dataframe": df,
                                                 "sql": sql
                                             })
 
-                                    except ProgrammingError as e:
+                                    except ValueError as e:
+                                        # Security block from run_query (non-SELECT, write keyword)
                                         logging.error(
-                                            f"ProgrammingError | emp_no={emp_no} | question={prompt} | sql={sql} | error={e}"
+                                            f"run_query security block | emp_no={emp_no} | sql={sql} | error={e}"
                                         )
-                                        msg = (
-                                            "⚠️ I couldn't generate a valid query for that question. "
-                                            "Try rephrasing it."
+                                        msg = "🚫 Access denied: that query type is not permitted."
+                                        st.warning(msg)
+                                        log_audit(emp_no, email, prompt, sql, 0, True, str(e))
+                                        st.session_state.messages.append({
+                                            "role": "assistant",
+                                            "content": msg,
+                                            "sql": sql
+                                        })
+
+                                    except RuntimeError as e:
+                                        # DB error from run_query
+                                        logging.error(
+                                            f"DB error | emp_no={emp_no} | question={prompt} | sql={sql} | error={e}"
                                         )
+                                        msg = "⚠️ I couldn't generate a valid query for that question. Try rephrasing it."
                                         st.warning(msg)
                                         st.session_state.messages.append({
                                             "role": "assistant",
@@ -350,7 +355,7 @@ def show_chat(session):
                         logging.error(
                             f"Unhandled error | emp_no={emp_no} | question={prompt} | error={e}"
                         )
-                        msg = "Sorry, I couldn't process your question. Please try rephrasing it."
+                        msg = "⚠️ Sorry, I couldn't process your question. Please try rephrasing it."
                         st.error(msg)
                         st.session_state.messages.append({
                             "role": "assistant",
@@ -361,7 +366,6 @@ def show_chat(session):
 # ENTRY POINT
 # ─────────────────────────────────────────────
 session = get_current_session()
-
 if session is None:
     show_login()
 else:
