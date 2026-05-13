@@ -17,15 +17,15 @@ logging.basicConfig(
 )
 
 @st.cache_resource
-@st.cache_resource
 def get_engine():
     try:
         user = os.getenv("DB_USER", "hr_app")
         password = quote_plus(os.getenv("DB_PASSWORD"))
         host = os.getenv("DB_HOST", "localhost")
+        port = os.getenv("DB_PORT", "3306")
         db = os.getenv("DB_NAME", "employees")
         engine = create_engine(
-            f"mysql+mysqlconnector://{user}:{password}@{host}/{db}",
+            f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}",
             connect_args={
                 "connection_timeout": 10,
                 "read_timeout": 30,
