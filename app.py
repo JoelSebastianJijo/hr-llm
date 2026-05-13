@@ -120,23 +120,8 @@ def show_login():
             except Exception as e:
                 st.error(f"❌ Login failed: {str(e)}")
     else:
-        auth_url = get_google_auth_url()
-        st.write(auth_url)
-        st.markdown(f"""
-            <a href="{auth_url}" target="_self">
-                <button style="
-                    background-color: #4285F4;
-                    color: white;
-                    padding: 12px 24px;
-                    border: none;
-                    border-radius: 6px;
-                    font-size: 16px;
-                    cursor: pointer;
-                ">
-                    🔵 Login with Google
-                </button>
-            </a>
-        """, unsafe_allow_html=True)
+       auth_url = get_google_auth_url()
+       st.link_button("🔵 Login with Google", auth_url)
 
 # ─────────────────────────────────────────────
 # INTENT DETECTION
