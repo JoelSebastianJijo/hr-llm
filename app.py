@@ -121,6 +121,7 @@ def show_login():
                 st.error(f"❌ Login failed: {str(e)}")
     else:
         auth_url = get_google_auth_url()
+        st.write(auth_url)
         st.markdown(f"""
             <a href="{auth_url}" target="_self">
                 <button style="
