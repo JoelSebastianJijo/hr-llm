@@ -7,6 +7,7 @@ from google.auth.transport import requests as google_requests
 from sqlalchemy import text
 from database.db import get_engine
 from dotenv import load_dotenv
+import streamlit as st
 
 load_dotenv()
 
@@ -19,7 +20,7 @@ logging.basicConfig(
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-import streamlit as st
+
 
 def get_redirect_uri():
     try:
