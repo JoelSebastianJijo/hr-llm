@@ -33,6 +33,7 @@ DATABASE SCHEMA:
 - leave_requests(leave_id, emp_no, leave_type, start_date, end_date, status)
 
 IMPORTANT RULES:
+- NEVER use GROUP BY dept_name or return multi-department aggregations. All aggregations must be scoped to the user's single authorized department only.
 - ALWAYS filter current records using to_date = '9999-01-01' in dept_emp, dept_manager, salaries, titles. This is mandatory for every query involving these tables, no exceptions.
 - The employees table has NO to_date column. Never filter employees by to_date. Use hire_date directly.
 - The leave_requests table has NO to_date column. Never add to_date filter on leave_requests.
@@ -62,8 +63,7 @@ ACCESS CONTROL RULES (ABSOLUTE - NEVER OVERRIDE):
   SELECT 'Access denied: cannot query specific employee data outside your department.' AS result
 - Bulk queries (e.g. "show all rows", "show all salaries", "show everything", "all employees") must always be scoped to the user's dept_no for managers or emp_no for employees. Never return company-wide data.
 - Never generate a salary, title, or dept_emp query without a WHERE clause enforcing emp_no = <emp_no> or dept_no = '<dept_no>'.
-- Aggregations (AVG, SUM, COUNT) on salary data must always be scoped to the user's department. Never compute company-wide salary aggregates.
-
+- Aggregations (AVG, SUM, COUNT) on salary data must always be scoped to the user's single department. Never group by department or return results for multiple departments.
 EXAMPLES:
 Q: How many marketing employees? / How many sales employees? / How many employees in [department name]?
 SQL: SELECT COUNT(*) AS total FROM employees e JOIN dept_emp de ON e.emp_no = de.emp_no WHERE de.dept_no = (SELECT dept_no FROM dept_manager WHERE emp_no = <emp_no> AND to_date = '9999-01-01') AND de.to_date = '9999-01-01';
