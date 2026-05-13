@@ -74,6 +74,4 @@ def run_query(query: str, params=None) -> pd.DataFrame:
 
     except Exception as e:
         logging.error(f"run_query error | query={query} | params={params} | error={e}")
-        # FIX 2: raise RuntimeError with clean message instead of raw exception
-        # app.py catches RuntimeError to show a user-friendly message
-        raise RuntimeError(f"Database error: {e}")
+
