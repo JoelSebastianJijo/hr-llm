@@ -141,57 +141,84 @@ ORDER BY d.dept_name;
 
 Q: How many employees are there?
 SQL: SELECT COUNT(*) AS total_employees FROM employees;
+
+Q: Show me the employee with the highest salary from each department.
+SQL: SELECT e.first_name, e.last_name, d.dept_name, s.salary
+FROM employees e
+JOIN salaries s ON e.emp_no = s.emp_no
+JOIN dept_emp de ON e.emp_no = de.emp_no
+JOIN departments d ON de.dept_no = d.dept_no
+WHERE s.to_date = '9999-01-01' AND de.to_date = '9999-01-01'
+AND (de.dept_no, s.salary) IN (
+    SELECT de2.dept_no, MAX(s2.salary)
+    FROM salaries s2
+    JOIN dept_emp de2 ON s2.emp_no = de2.emp_no
+    WHERE s2.to_date = '9999-01-01' AND de2.to_date = '9999-01-01'
+    GROUP BY de2.dept_no
+)
+ORDER BY d.dept_name;
 """
+
+# Maximum number of retries on rate limit
+_MAX_RETRIES = 3
 
 
 def _call_groq(messages: list) -> str:
     """
-    Internal helper that calls the Groq API with specific error handling:
-    - APITimeoutError: retry once after 2s backoff, then fail with clear message
-    - RateLimitError: log and surface the wait time to the user
-    - Any other exception: log and re-raise
+    Calls the Groq API with retry logic:
+    - RateLimitError: retries up to _MAX_RETRIES times with exponential backoff.
+      After all retries exhausted, returns an ERROR: string (never raises).
+    - APITimeoutError: retries once after 2s, then returns ERROR: string.
+    - Any other exception: re-raises so nl_to_sql can catch it.
     """
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages
-        )
-        return response.choices[0].message.content.strip()
-
-    except APITimeoutError:
-        logging.warning("Groq API timeout — retrying once after 2s backoff")
-        time.sleep(2)
+    # ── Rate-limit retry loop ──────────────────────────────────────────────
+    for attempt in range(_MAX_RETRIES):
         try:
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=messages
             )
             return response.choices[0].message.content.strip()
-        except APITimeoutError:
-            logging.error("Groq API timeout on retry — giving up")
-            raise RuntimeError(
-                "The AI service timed out. Please wait a moment and try again."
-            )
 
-    except RateLimitError as e:
-        wait_time = getattr(e, 'retry_after', None)
-        if wait_time:
-            msg = f"Rate limit reached. Please wait {wait_time} seconds before trying again."
-        else:
-            msg = "Rate limit reached. Please wait a moment before trying again."
-        logging.error(f"Groq rate limit hit: {e}")
-        raise RuntimeError(msg)
+        except RateLimitError as e:
+            wait_time = getattr(e, 'retry_after', None) or (2 ** attempt)
+            if attempt < _MAX_RETRIES - 1:
+                logging.warning(
+                    f"Groq rate limit hit (attempt {attempt + 1}/{_MAX_RETRIES}), "
+                    f"retrying in {wait_time}s | error={e}"
+                )
+                time.sleep(wait_time)
+                continue
+            # All retries exhausted — return ERROR: string, do NOT raise
+            logging.error(f"Groq rate limit hit after {_MAX_RETRIES} attempts: {e}")
+            return "ERROR: The AI service is temporarily busy. Please wait a moment and try again."
+
+        except APITimeoutError:
+            logging.warning("Groq API timeout — retrying once after 2s backoff")
+            time.sleep(2)
+            try:
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages
+                )
+                return response.choices[0].message.content.strip()
+            except APITimeoutError:
+                logging.error("Groq API timeout on retry — giving up")
+                return "ERROR: The AI service timed out. Please wait a moment and try again."
+
+    # Should never reach here, but safety net
+    return "ERROR: The AI service is unavailable. Please try again later."
 
 
 def nl_to_sql(question: str, emp_no: int, is_manager: bool = False, is_admin: bool = False) -> str:
     try:
         if is_admin:
             role_instruction = (
-            "You are in ADMIN mode. There are NO access restrictions.\n"
-            "You can query any employee, any department, any salary.\n"
-            "However, you must NEVER generate INSERT, UPDATE, DELETE, or DROP statements.\n"
-            "Read-only access only.\n"
-            )    
+                "You are in ADMIN mode. There are NO access restrictions.\n"
+                "You can query any employee, any department, any salary.\n"
+                "However, you must NEVER generate INSERT, UPDATE, DELETE, or DROP statements.\n"
+                "Read-only access only.\n"
+            )
         elif is_manager:
             role_instruction = (
                 f"The user is a MANAGER with emp_no {emp_no}.\n\n"
@@ -248,10 +275,14 @@ def nl_to_sql(question: str, emp_no: int, is_manager: bool = False, is_admin: bo
         ]
 
         sql = _call_groq(messages)
+
+        # _call_groq now returns ERROR: strings instead of raising on rate limit/timeout
+        if sql.startswith("ERROR:"):
+            return sql
+
         sql = sql.replace("```sql", "").replace("```", "").strip()
 
         # FIX 6: Post-generation table whitelist check
-        # If LLM somehow references a forbidden table, block it before execution
         forbidden_tables = ['user_accounts', 'sessions', 'audit_log', 'information_schema']
         sql_lower = sql.lower()
         for table in forbidden_tables:
@@ -263,14 +294,9 @@ def nl_to_sql(question: str, emp_no: int, is_manager: bool = False, is_admin: bo
 
         return sql
 
-    except RuntimeError as e:
-        logging.error(f"nl_to_sql RuntimeError | emp_no={emp_no} | question={question} | error={e}")
-        return f"ERROR: {e}"
-
     except Exception as e:
         logging.error(f"nl_to_sql error | emp_no={emp_no} | is_manager={is_manager} | question={question} | error={e}")
-        # FIX 7: prefix with ERROR: so app.py's startswith("ERROR:") check catches it
-        return f"ERROR: Could not process your request. Please try again or contact support."
+        return "ERROR: Could not process your request. Please try again or contact support."
 
 
 if __name__ == "__main__":
