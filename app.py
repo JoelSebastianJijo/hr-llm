@@ -101,6 +101,7 @@ def show_login():
                     emp_no=user["emp_no"],
                     email=email,
                     role=user["role"]
+                    is_admin=user["is_admin"]
                 )
                 if not session_id:
                     st.error("❌ Failed to create session. Please try again.")
@@ -109,6 +110,7 @@ def show_login():
                 st.session_state["emp_no"] = user["emp_no"]
                 st.session_state["role"] = user["role"]
                 st.session_state["email"] = email
+                st.session_state["is_admin"] = user["is_admin"]
                 st.query_params.clear()
                 st.rerun()
             except Exception as e:
