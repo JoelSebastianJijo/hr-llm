@@ -83,18 +83,18 @@ def get_user_account(email: str):
         engine = get_engine()
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT emp_no, role FROM user_accounts
+                SELECT emp_no, role, is_admin FROM user_accounts
                 WHERE email = :email
             """), {"email": email})
             row = result.fetchone()
             if row:
-                return {"emp_no": row.emp_no, "role": row.role}
+                return {"emp_no": row.emp_no, "role": row.role, "is_admin": bool(row.is_admin)}
             return None
     except Exception as e:
         logging.error(f"get_user_account failed for {email}: {e}")
         return None
 
-def create_session(emp_no: int, email: str, role: str):
+def create_session(emp_no: int, email: str, role: str, is_admin: bool = False):
     """Create a session in the sessions table and return the session_id."""
     try:
         session_id = secrets.token_hex(32)
@@ -102,13 +102,14 @@ def create_session(emp_no: int, email: str, role: str):
         engine = get_engine()
         with engine.connect() as conn:
             conn.execute(text("""
-                INSERT INTO sessions (session_id, emp_no, email, role, expires_at)
-                VALUES (:session_id, :emp_no, :email, :role, :expires_at)
+                INSERT INTO sessions (session_id, emp_no, email, role, is_admin, expires_at)
+                VALUES (:session_id, :emp_no, :email, :role, :is_admin, :expires_at)
             """), {
                 "session_id": session_id,
                 "emp_no": emp_no,
                 "email": email,
                 "role": role,
+                "is_admin": is_admin,
                 "expires_at": expires_at
             })
             conn.commit()
@@ -118,12 +119,12 @@ def create_session(emp_no: int, email: str, role: str):
         return None
 
 def validate_session(session_id: str):
-    """Validate session and return emp_no, email, role if valid."""
+    """Validate session and return emp_no, email, role, is_admin if valid."""
     try:
         engine = get_engine()
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT emp_no, email, role FROM sessions
+                SELECT emp_no, email, role, is_admin FROM sessions
                 WHERE session_id = :session_id
                 AND expires_at > NOW()
             """), {"session_id": session_id})
@@ -132,7 +133,8 @@ def validate_session(session_id: str):
                 return {
                     "emp_no": row.emp_no,
                     "email": row.email,
-                    "role": row.role
+                    "role": row.role,
+                    "is_admin": bool(row.is_admin)
                 }
             return None
     except Exception as e:
