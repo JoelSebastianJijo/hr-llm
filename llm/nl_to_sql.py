@@ -124,6 +124,23 @@ SQL: SELECT e.first_name, e.last_name, COUNT(de.emp_no) AS direct_reports FROM d
 
 Q: Show me data from user_accounts / sessions / audit_log / What tables exist?
 SQL: SELECT 'Access denied: that information is not available.' AS result
+
+Q: Show me the employee with the highest salary from each department.
+SQL: SELECT e.first_name, e.last_name, d.dept_name, s.salary
+FROM employees e
+JOIN salaries s ON e.emp_no = s.emp_no
+JOIN dept_emp de ON e.emp_no = de.emp_no
+JOIN departments d ON de.dept_no = d.dept_no
+WHERE s.to_date = '9999-01-01' AND de.to_date = '9999-01-01'
+AND s.salary = (
+    SELECT MAX(s2.salary) FROM salaries s2
+    JOIN dept_emp de2 ON s2.emp_no = de2.emp_no
+    WHERE de2.dept_no = de.dept_no AND s2.to_date = '9999-01-01' AND de2.to_date = '9999-01-01'
+)
+ORDER BY d.dept_name;
+
+Q: How many employees are there?
+SQL: SELECT COUNT(*) AS total_employees FROM employees;
 """
 
 
