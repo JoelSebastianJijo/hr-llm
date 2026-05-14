@@ -166,9 +166,16 @@ def _call_groq(messages: list) -> str:
         raise RuntimeError(msg)
 
 
-def nl_to_sql(question: str, emp_no: int, is_manager: bool = False) -> str:
+def nl_to_sql(question: str, emp_no: int, is_manager: bool = False, is_admin: bool = False) -> str:
     try:
-        if is_manager:
+        if is_admin:
+            role_instruction = (
+            "You are in ADMIN mode. There are NO access restrictions.\n"
+            "You can query any employee, any department, any salary.\n"
+            "However, you must NEVER generate INSERT, UPDATE, DELETE, or DROP statements.\n"
+            "Read-only access only.\n"
+            )    
+        elif is_manager:
             role_instruction = (
                 f"The user is a MANAGER with emp_no {emp_no}.\n\n"
                 f"Their department is found via: SELECT dept_no FROM dept_manager WHERE emp_no = {emp_no} AND to_date = '9999-01-01'\n\n"
