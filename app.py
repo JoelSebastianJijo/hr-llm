@@ -100,7 +100,7 @@ def show_login():
                 session_id = create_session(
                     emp_no=user["emp_no"],
                     email=email,
-                    role=user["role"]
+                    role=user["role"],
                     is_admin=user["is_admin"]
                 )
                 if not session_id:
