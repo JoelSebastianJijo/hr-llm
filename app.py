@@ -217,6 +217,7 @@ def show_chat(session):
     emp_no = session["emp_no"]
     role = session["role"]
     email = session["email"]
+    is_admin = session.get("is_admin", False)
     is_manager = role == "manager"
 
     # st.set_page_config() is now at top level (FIX 8)
@@ -226,7 +227,7 @@ def show_chat(session):
     with st.sidebar:
         st.markdown(f"**Email:** {email}")
         st.markdown(f"**Emp No:** {emp_no}")
-        st.markdown(f"**Role:** {role.capitalize()}")
+        st.markdown(f"**Role:** {'🔑 Admin' if is_admin else role.capitalize()}")
         if st.button("🚪 Logout"):
             logout(st.session_state["session_id"])
             for key in ["session_id", "emp_no", "role", "email"]:
@@ -272,7 +273,7 @@ def show_chat(session):
                                 "content": msg
                             })
                         else:
-                            sql = nl_to_sql(prompt, emp_no=emp_no, is_manager=is_manager)
+                            sql = nl_to_sql(prompt, emp_no=emp_no, is_manager=is_manager, is_admin=is_admin)
 
                             if sql.startswith("ERROR:"):
                                 # Clean up the ERROR: prefix for display
@@ -286,9 +287,13 @@ def show_chat(session):
                                     "content": f"⚠️ {user_msg}"
                                 })
                             else:
-                                is_safe, reason = validate_sql(
+                                if is_admin:
+                                    is_safe = True
+                                    reason = None
+                                else:
+                                    is_safe, reason = validate_sql(
                                     sql, emp_no=emp_no, is_manager=is_manager
-                                )
+                                    )
                                 if not is_safe:
                                     logging.error(
                                         f"Security block | emp_no={emp_no} | question={prompt} | sql={sql} | reason={reason}"
